@@ -20,6 +20,7 @@ namespace ClusterClient.Clients
             var addressByTask = new Dictionary<Task, string>();
             var processRequestTasks = new List<Task>();
             var stopwatchForTask = new Dictionary<Task, Stopwatch>();
+            var exceptions = new List<Exception>();
             var remainingTimeout = timeout;
             var totalSw = Stopwatch.StartNew();
             string[] orderedReplicaAddresses;
@@ -61,6 +62,7 @@ namespace ClusterClient.Clients
                 if (!completedTask.Result.IsCompletedSuccessfully)
                 {
                     processRequestTasks.Remove(completedTask.Result);
+                    exceptions.Add(completedTask.Result.Exception);
                     lock (responseTimesByAddress)
                     {
                         if (!responseTimesByAddress.ContainsKey(addressByTask[completedTask.Result]))
@@ -82,8 +84,8 @@ namespace ClusterClient.Clients
                     return ((Task<string>)completedTask.Result).Result;
                 }
             }
-            if (totalSw.Elapsed < timeout)
-                throw new Exception();
+            if (totalSw.Elapsed < timeout - Epsilon)
+                throw new AggregateException(exceptions);
             throw new TimeoutException();
         }
 

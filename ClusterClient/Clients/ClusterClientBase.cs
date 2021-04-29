@@ -10,6 +10,7 @@ namespace ClusterClient.Clients
 {
     public abstract class ClusterClientBase
     {
+        protected TimeSpan Epsilon = TimeSpan.FromMilliseconds(100);
         protected string[] ReplicaAddresses { get; set; }
 
         protected ClusterClientBase(string[] replicaAddresses)

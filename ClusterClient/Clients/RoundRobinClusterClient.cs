@@ -21,6 +21,7 @@ namespace ClusterClient.Clients
             var totalSw = Stopwatch.StartNew();
             var remainingTimeout = timeout;
             string[] orderedReplicaAddresses;
+            var exceptions = new List<Exception>();
             lock (responseTimesByAddress)
             {
                 orderedReplicaAddresses = ReplicaAddresses
@@ -49,12 +50,15 @@ namespace ClusterClient.Clients
                 if (processTask.IsCompleted)
                 {
                     if (!processTask.IsCompletedSuccessfully)
+                    {
                         lock (responseTimesByAddress)
                         {
                             if (!responseTimesByAddress.ContainsKey(uri))
                                 responseTimesByAddress[uri] = new TimeStat();
                             responseTimesByAddress[uri].Add(timeout * 2);
                         }
+                        exceptions.Add(processTask.Exception);
+                    }
                     else
                     {
                         lock (responseTimesByAddress)
@@ -68,8 +72,8 @@ namespace ClusterClient.Clients
                 }
                 remainingTimeout -= sw.Elapsed;
             }
-            if (totalSw.Elapsed < timeout)
-                throw new Exception();
+            if (totalSw.Elapsed < timeout - Epsilon)
+                throw new AggregateException(exceptions);
             throw new TimeoutException();
         }
 
