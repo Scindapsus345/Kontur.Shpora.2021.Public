@@ -1,23 +1,49 @@
-﻿using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using log4net;
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace ClusterClient.Clients
 {
     public class ParallelClusterClient : ClusterClientBase
     {
-        public ParallelClusterClient(string[] replicaAddresses) : base(replicaAddresses)
+
+        public ParallelClusterClient(string[] replicaAddresses)
+            : base(replicaAddresses)
         {
         }
 
-        public override Task<string> ProcessRequestAsync(string query, TimeSpan timeout)
+        public override async Task<string> ProcessRequestAsync(string query, TimeSpan timeout)
         {
-            throw new NotImplementedException();
+            var processRequestTasks = new List<Task>();
+
+            foreach (var uri in ReplicaAddresses)
+            {
+                var webRequest = CreateRequest(uri + "?query=" + query);
+                Log.InfoFormat($"Processing {webRequest.RequestUri}");
+                processRequestTasks.Add(ProcessRequestAsync(webRequest));
+            }
+
+            var delayTask = Task.Delay(timeout);
+            while (processRequestTasks.Count != 0)
+            {
+                await Task.WhenAny(Task.WhenAny(processRequestTasks), delayTask);
+
+                if (delayTask.IsCompleted)
+                    throw new TimeoutException();
+
+                var completedTask = processRequestTasks.First(t => t.IsCompleted);
+
+                if (completedTask.IsFaulted)
+                    processRequestTasks.Remove(completedTask);
+                else
+                    return ((Task<string>) completedTask).Result;
+            }
+            throw new TimeoutException();
         }
 
-        protected override ILog Log => LogManager.GetLogger(typeof(ParallelClusterClient));
+        protected override ILog Log => LogManager.GetLogger(typeof(RandomClusterClient));
     }
 }
