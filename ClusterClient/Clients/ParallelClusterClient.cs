@@ -29,19 +29,18 @@ namespace ClusterClient.Clients
             var delayTask = Task.Delay(timeout);
             while (processRequestTasks.Count != 0)
             {
-                await Task.WhenAny(Task.WhenAny(processRequestTasks), delayTask);
+                var completedTask = Task.WhenAny(processRequestTasks);
+                await Task.WhenAny(completedTask, delayTask);
 
                 if (delayTask.IsCompleted)
                     throw new TimeoutException();
 
-                var completedTask = processRequestTasks.First(t => t.IsCompleted);
-
-                if (completedTask.IsFaulted)
-                    processRequestTasks.Remove(completedTask);
+                if (!completedTask.Result.IsCompletedSuccessfully)
+                    processRequestTasks.Remove(completedTask.Result);
                 else
-                    return ((Task<string>) completedTask).Result;
+                    return ((Task<string>)completedTask.Result).Result;
             }
-            throw new TimeoutException();
+            throw new Exception();
         }
 
         protected override ILog Log => LogManager.GetLogger(typeof(RandomClusterClient));

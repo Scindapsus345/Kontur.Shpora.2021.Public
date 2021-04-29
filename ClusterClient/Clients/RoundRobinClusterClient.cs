@@ -9,7 +9,7 @@ namespace ClusterClient.Clients
 {
     public class RoundRobinClusterClient : ClusterClientBase
     {
-        private readonly Dictionary<string, List<TimeSpan>> responseTimesByAddress = new();
+        private readonly Dictionary<string, TimeStat> responseTimesByAddress = new();
 
         public RoundRobinClusterClient(string[] replicaAddresses)
             : base(replicaAddresses)
@@ -18,19 +18,20 @@ namespace ClusterClient.Clients
 
         public override async Task<string> ProcessRequestAsync(string query, TimeSpan timeout)
         {
-            var addressByTask = new Dictionary<Task, string>();
+            var totalSw = Stopwatch.StartNew();
             var remainingTimeout = timeout;
+            string[] orderedReplicaAddresses;
             lock (responseTimesByAddress)
             {
-                ReplicaAddresses = ReplicaAddresses
+                orderedReplicaAddresses = ReplicaAddresses
                     .OrderBy(addr =>
                     {
                         if (!responseTimesByAddress.ContainsKey(addr))
                             return 0;
-                        return responseTimesByAddress[addr].Select(ts => ts.Milliseconds).Average();
+                        return responseTimesByAddress[addr].AverageMilliseconds();
                     }).ToArray();
             }
-            for (var i = 0; i < ReplicaAddresses.Length; i++)
+            for (var i = 0; i < orderedReplicaAddresses.Length; i++)
             {
                 var uri = ReplicaAddresses[i];
                 var webRequest = CreateRequest(uri + "?query=" + query);
@@ -40,7 +41,6 @@ namespace ClusterClient.Clients
                 sw.Start();
 
                 var processTask = ProcessRequestAsync(webRequest);
-                addressByTask[processTask] = uri;
 
                 var timeoutForTask = remainingTimeout / (ReplicaAddresses.Length - i);
                 var delayTask = Task.Delay(timeoutForTask);
@@ -48,19 +48,28 @@ namespace ClusterClient.Clients
 
                 if (processTask.IsCompleted)
                 {
-                    if (processTask.IsFaulted)
-                        continue;
-                    lock (responseTimesByAddress)
+                    if (!processTask.IsCompletedSuccessfully)
+                        lock (responseTimesByAddress)
+                        {
+                            if (!responseTimesByAddress.ContainsKey(uri))
+                                responseTimesByAddress[uri] = new TimeStat();
+                            responseTimesByAddress[uri].Add(timeout * 2);
+                        }
+                    else
                     {
-                        if (!responseTimesByAddress.ContainsKey(addressByTask[processTask]))
-                            responseTimesByAddress[addressByTask[processTask]] = new List<TimeSpan>();
-                        responseTimesByAddress[addressByTask[processTask]].Add(sw.Elapsed);
+                        lock (responseTimesByAddress)
+                        {
+                            if (!responseTimesByAddress.ContainsKey(uri))
+                                responseTimesByAddress[uri] = new TimeStat();
+                            responseTimesByAddress[uri].Add(sw.Elapsed);
+                        }
+                        return processTask.Result;
                     }
-                    return processTask.Result;
                 }
-                remainingTimeout -= timeoutForTask;
+                remainingTimeout -= sw.Elapsed;
             }
-
+            if (totalSw.Elapsed < timeout)
+                throw new Exception();
             throw new TimeoutException();
         }
 
